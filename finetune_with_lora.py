@@ -12,24 +12,25 @@ from model_set.lora_model import Model_args,GPT,get_lora_model
 from tqdm import tqdm
 # ------------------------------------
 # 模型参数设置 注意模型结构要与原始模型结构一致
-block_size = 128 # 窗口大小GPT2为1024 即上下文长度（输入的文本块的大小）
-n_layer = 6 # 模型层数
-n_head = 6 # 注意力头
+block_size = 1024 # 窗口大小GPT2为1024 即上下文长度（输入的文本块的大小）
+n_layer = 12 # 模型层数
+n_head = 12 # 注意力头
 n_embed = 768 # 嵌入向量的维度，即embedding层
 bias = False # 是否使用偏置项
 dropout = 0.0
 #lora层参数
 lora_rank: int = 8
-lora_alpha: float = 16
+lora_alpha: float = 16.0
 lora_dropout: float = 0.05
 
 # ------------------------------------
 # 数据集设置
+gradient_accumulation_steps = 20 # used to simulate larger batch sizes
 batch_size = 1 # 暂定，之后再看显存占用
-dataset_path = './data/dmbj'
-init_from = 'resume' # 'pretrain' or 'resume' # 载入预训练权重or继续训练
+dataset_path = './data/chat'
+init_from = 'pretrain' # 'pretrain' or 'resume' # 载入预训练权重or继续训练
 model_pretrain_path = './chat/checkpoints'
-checkpoint_save_dir = './chat/checkpoints'
+checkpoint_save_dir = './chat/lora_checkpoints'
 if not os.path.exists(checkpoint_save_dir):
     os.makedirs(checkpoint_save_dir,exist_ok=True)
 
@@ -39,7 +40,7 @@ eval_iters = 200 # 评估间隔
 eval_interval = 200 # 每n步eval和保存checkpoint一次
 learning_rate = 6e-3 # 初始学习率
 warmup_iters = 2000 # warmup的迭代次数
-lr_decay_iters = 180000 # 学习率降低的步数，最好接近max_iter
+lr_decay_iters = 200000 # 学习率降低的步数，最好接近max_iter
 min_lr = 6e-6
 # 优化器参数
 max_iters = 200000 # 模型的最大的参数更新次数
@@ -185,13 +186,23 @@ def train(split,dataset_path,model_args,model_pretrain_path):
             torch.save(checkpoint, os.path.join(checkpoint_save_dir, 'lora_checkpoint.pt'))
             print(f"checkpoint保存在{checkpoint_save_dir}/lora_checkpoint.pt")
 
-        with ctx:
-            logits, loss = model(X, Y)
-            # print(f"iter:{iter_num},loss:{loss.item()}")
+        # with ctx:
+        #     logits, loss = model(X, Y)
+        #     # print(f"iter:{iter_num},loss:{loss.item()}")
+        #     tqdm_info.set_description(f'iter [{iter_num + 1}/{max_iters}]')
+        #     tqdm_info.set_postfix(lr=lr, loss=loss.item())
+        #     scaler.scale(loss).backward()
+        #     # 用scaler，scale loss(FP16)，backward得到scaled的梯度(FP16)
+        for micro_step in range(gradient_accumulation_steps):
+            with ctx:
+                logits, loss = model(X, Y)
+                loss = loss / gradient_accumulation_steps  # scale the loss to account for gradient accumulation
+            # immediately async prefetch next batch while model is doing the forward pass on the GPU
+            X, Y = get_batch('train')
+            # backward pass, with gradient scaling if training in fp16
             tqdm_info.set_description(f'iter [{iter_num + 1}/{max_iters}]')
-            tqdm_info.set_postfix(lr=lr, loss=loss.item())
+            tqdm_info.set_postfix(lr=optimizer.param_groups[0]['lr'], loss=loss.item())
             scaler.scale(loss).backward()
-            # 用scaler，scale loss(FP16)，backward得到scaled的梯度(FP16)
         if grad_clip > 0.0:
             scaler.unscale_(optimizer)  # unscale梯度回fp32
             nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
