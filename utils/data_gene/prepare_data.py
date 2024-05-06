@@ -1,4 +1,5 @@
 '''将txt or json格式的数据集文件制作为数据集文件'''
+'''添加将alpaca对话的内容转换为<bot><human>对话格式'''
 import os
 import tiktoken
 import numpy as np
@@ -73,8 +74,25 @@ def process_wiki_json(input_file):
     train_ids.tofile(os.path.join(os.path.dirname(__file__), './wiki/train.bin'))
     val_ids.tofile(os.path.join(os.path.dirname(__file__), './wiki/val.bin'))
 
+def process_alpaca(alpaca_data):
+    with open(alpaca_data,encoding='utf-8') as json_file, open('alpaca_qa.txt','w',encoding='utf-8') as txt_file:
+        data = [json.loads(line) for line in json_file]
+        for json_data in tqdm(data):
+            data = json_data
+            if data["input"]:
+                human = "<human>" + data["instruction_zh"] + ": " + data["input"] + "<|endOfText|>\n"
+            else:
+                human = "<human>" + data["instruction_zh"] + "<|endOfText|>\n"
+            bot = "<bot>" + data["output_zh"] + "<|endOfText>\n"
+            txt_file.write(human)
+            txt_file.write(bot)
+
 if __name__ == "__main__":
-    # txt_file = 'sherlock/sherlock.txt'
+    # txt_file = '../../data/chat/qingyun_30k.txt'
     # split_txt(txt_file)
-    wiki_json = 'wiki/wikipedia-cn-20230720-filtered.json'
-    process_wiki_json(wiki_json)
+    # wiki_json = 'wiki/wikipedia-cn-20230720-filtered.json'
+    # process_wiki_json(wiki_json)
+    # alpaca_file = '../../data/finetune/Alpaca_data_gpt4_zh.jsonl'
+    # process_alpaca(alpaca_file)
+    txt_file = 'alpaca_qa.txt'
+    split_txt(txt_file)
