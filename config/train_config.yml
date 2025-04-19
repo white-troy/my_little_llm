@@ -1,0 +1,13 @@
+# 训练参数配置
+lr: 5e-5
+batch_size: 4
+max_seq_length: 512
+dataset_path: 'utils\data_gene\output_data.jsonl'
+epochs: 5
+
+
+optimizer:
+  name: "adamw"
+  beta1: 0.9
+  beta2: 0.999
+  weight_decay: 0.01
