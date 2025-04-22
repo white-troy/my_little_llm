@@ -35,14 +35,16 @@ def train(model,config,train_func,eval_func):
     train_loader,val_loader = get_dataset(config.dataset_path)
 
     best_loss = 1e9
+    print("开始训练")
     for epoch in range(epochs):
         train_loss = train_func(model,train_loader,optimizer,lr,device,epoch)
         val_loss = eval_func(model,val_loader,device,epoch)
 
         # 保存模型
+        avg_train_loss = train_loss / len(train_loader)
         avg_val_loss = val_loss / len(val_loader)
 
-        logger.info(f"Epoch {epoch+1}/{config.epochs} - Train Loss: {train_loss:.4f} - Val Loss: {avg_val_loss:.4f}")
+        logger.info(f"Epoch {epoch+1}/{config.epochs} - Train Loss: {avg_train_loss:.4f} - Val Loss: {avg_val_loss:.4f}")
 
 
         if avg_val_loss < best_loss:

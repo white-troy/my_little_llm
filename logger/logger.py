@@ -7,12 +7,11 @@ class StreamToLogger:
     def __init__(self, logger, log_level=logging.INFO):
         self.logger = logger
         self.log_level = log_level
-        self.buffer = ""
+        self.linebuf = ""
 
-    def write(self, message):
-        message = message.strip()
-        if message:
-            self.logger.log(self.log_level, message)
+    def write(self, buf):
+        for line in buf.rstrip().splitlines():
+            self.logger.log(self.log_level, line.rstrip())
 
     def flush(self):
         pass
@@ -41,8 +40,16 @@ def setup_logger(log_dir="logs", logger_name="training_logger"):
         logger.addHandler(file_handler)
         logger.addHandler(console_handler)
 
-        # 同时将stdout和stderr重定向到logger
+        # 只重定向 stdout，不动 stderr
         sys.stdout = StreamToLogger(logger, logging.INFO)
-        sys.stderr = StreamToLogger(logger, logging.ERROR)
+
+        # 捕获未处理异常写入日志（但不覆盖 tqdm）
+        def handle_exception(exc_type, exc_value, exc_traceback):
+            if issubclass(exc_type, KeyboardInterrupt):
+                sys.__stderr__.write("KeyboardInterrupt\n")
+                return
+            logger.error("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
+
+        sys.excepthook = handle_exception
 
     return logger
