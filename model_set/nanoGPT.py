@@ -88,6 +88,7 @@ class NANOGPT(nn.Module):
     def __init__(self,model_config):
         super().__init__()
         # print(model_config.__dict__.keys())
+        self.block_size = model_config.block_size
         self.token_embedding_table = nn.Embedding(model_config.vocab_size,model_config.n_embed)
         self.position_embedding_tabel = nn.Embedding(model_config.block_size,model_config.n_embed)
         self.blocks = nn.Sequential(

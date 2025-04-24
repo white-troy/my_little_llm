@@ -79,3 +79,7 @@ def chat(ckpt_path):
             break
         response = bot.chat(prompt, max_new_tokens=256,temperature=0.7)
         print("Bot:", response)
+
+if __name__ == "__main__":
+    pt_path = "D:/python/pythonpj/LLM/my_little_llm/checkpoints/best.pt"
+    chat(pt_path)

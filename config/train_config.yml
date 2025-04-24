@@ -2,7 +2,8 @@
 lr: 5e-5
 batch_size: 4
 max_seq_length: 512
-dataset_path: 'utils\data_gene\output_data.jsonl'
+pre_dataset_path: 'utils\data_gene\output_data.jsonl'
+sft_dataset_path: 'utils\data_gene\sft_mini_512.jsonl'
 epochs: 5
 
 
