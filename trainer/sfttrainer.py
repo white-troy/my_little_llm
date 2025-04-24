@@ -41,7 +41,7 @@ def train_func(model, train_loader, optimizer, lr, device, epoch):
         # 计算token级别的初损失
         loss = loss_fn(logits,y)
         # mask掉前面的token损失
-        loss = (loss * loss_mask).sum/loss_mask.sum()
+        loss = (loss * loss_mask).sum()/loss_mask.sum()
 
         optimizer.zero_grad()
         loss.backward()

@@ -119,19 +119,19 @@ def sft_train(weight_path,config,train_func,eval_func):
             torch.save(checkpoint, f'{save_path}/best_sft.pt')
             logger.info(f"[SFT] Saved best model with val loss: {avg_val_loss:.4f}")
 
-def main(mode='pre'):
+def main(mode='pre',weight_path=None):
     model = NANOGPT(default_config)
     logger.info("Model initialized")
     if mode == 'pre':
         pre_train(model, default_config, pre_train_func, pre_eval_func)
     elif mode == 'sft':
-        weight_path = r"checkpoints\best_pre.pt"
         sft_train(weight_path, default_config, sft_train_func, sft_eval_func)
     else:
         raise ValueError("请输入选择的训练方式：'pre' 或 'sft'")
 
 if __name__ == "__main__":
-    main()
+    weight_path = None
+    main(mode='sft',weight_path=weight_path)
     save_path = os.path.join(current_dir,'checkpoints')
     if not os.path.exists(save_path):   
         os.mkdir(save_path)
