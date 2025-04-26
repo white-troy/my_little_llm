@@ -77,7 +77,17 @@ class SFTDataset(Dataset):
         self.block_size = block_size
         self.max_lines = max_lines
         self.enc = tiktoken.get_encoding(tokenizer_name)
-        self.eos_token = self.enc.encode("<|endoftext|>", allowed_special={"<|endoftext|>"})[0]
+
+        # 特殊token
+        self.eos_token_id = self.enc.encode("<|endoftext|>", allowed_special={"<|endoftext|>"})[0]
+        self.assistant_token_ids = self.enc.encode("<|assistant|>", allowed_special={"<|assistant|>"})
+        self.user_token_ids = self.enc.encode("<|user|>", allowed_special={"<|user|>"})
+
+        # 打印debug
+        # print(f"[Init] <|assistant|> tokens: {self.assistant_token_ids}")
+        # print(f"[Init] <|user|> tokens: {self.user_token_ids}")
+        # print(f"[Init] <|endoftext|> token id: {self.eos_token_id}")
+
         self.encoded_data = []
         self.loss_masks = []
         self.load_and_process_data(data_path)
@@ -105,6 +115,8 @@ class SFTDataset(Dataset):
                     data = json.loads(line.strip())
                     if 'conversations' not in data:
                         continue
+                    if not any(turn["role"] == "assistant" for turn in data['conversations']):
+                        continue  # 跳过没有assistant说话的
                     raw_data.append(data['conversations'])
                 except json.JSONDecodeError:
                     print(f"警告：跳过第{i+1}行- {str(e)}")
@@ -117,21 +129,19 @@ class SFTDataset(Dataset):
             for i in range(0, len(encoded), self.block_size + 1):
                 chunk = encoded[i:i+self.block_size+1]
                 if len(chunk) < self.block_size + 1:
-                    chunk += [self.eos_token] * (self.block_size + 1 - len(chunk))
+                    chunk += [self.eos_token_id] * (self.block_size + 1 - len(chunk))
                 self.encoded_data.append(chunk)
 
-                # 创建loss_mask：仅mask assistant部分
+                # 动态处理loss_mask
                 mask = [0] * len(chunk)
                 j = 0
                 while j < len(chunk):
-                    # 找到 <|assistant|>
-                    if chunk[j:j+3] == self.enc.encode("<|assistant|>", allowed_special={"<|assistant|>"}):
-                        start = j + 3
+                    if chunk[j:j+len(self.assistant_token_ids)] == self.assistant_token_ids:
+                        start = j + len(self.assistant_token_ids)
                         end = start
                         while end < len(chunk):
-                            # 找到下一个特殊token或结尾
-                            if chunk[end:end+3] == self.enc.encode("<|user|>", allowed_special={"<|user|>"}) or \
-                               chunk[end:end+1] == [self.eos_token]:
+                            if chunk[end:end+len(self.user_token_ids)] == self.user_token_ids or \
+                               chunk[end] == self.eos_token_id:
                                 break
                             end += 1
                         for k in range(start, end):
