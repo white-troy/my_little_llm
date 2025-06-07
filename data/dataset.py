@@ -4,16 +4,30 @@ import torch
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
+def get_chatml_tokenizer(name="gpt2"):
+    base_enc = tiktoken.get_encoding(name)
+    base_vocab_size = 50257 
+    special_tokens = {
+        "<|im_start|>": base_vocab_size,
+        "<|im_end|>": base_vocab_size + 1,
+    }
+
+    # 构建新编码器
+    enc = tiktoken.Encoding(
+        name=base_enc.name,
+        pat_str=base_enc._pat_str,
+        mergeable_ranks=base_enc._mergeable_ranks,
+        special_tokens={**base_enc._special_tokens, **special_tokens},
+    )
+    return enc
+
 class TextDataset(Dataset):
     def __init__(self,data_path,block_size,max_lines,tokenizer_name="gpt2"):
         self.block_size = block_size
         self.max_lines = max_lines
         # 初始化tokenizer
-        self.enc = tiktoken.get_encoding(tokenizer_name)
-        self.eos_token = self.enc.encode(
-            "<|endoftext|>",
-            allowed_special={"<|endoftext|>"}
-        )[0]
+        self.enc = get_chatml_tokenizer(tokenizer_name)
+        self.eos_token = self.enc.encode("<|endoftext|>",allowed_special={"<|endoftext|>"})[0]
         # 预处理数据
         self.encoded_data = []
         self.load_and_process_data(data_path)
@@ -28,15 +42,14 @@ class TextDataset(Dataset):
                     break
                 try:
                     # 先验证是否为有效JSON行
-                    json.loads(line.strip())  # 仅验证不保存结果
+                    # json.loads(line.strip())  # 仅验证不保存结果
                     json_line = json.loads(line.strip())
                     
                     # 检查是否存在必需的'text'字段
                     if 'text' not in json_line:
-                        raise KeyError(f"第{i+1}行缺少必需的'text'字段")
-                        
-                    text = json_line['text']
-                    raw_data.append(text)
+                        print(f"第{i+1}行缺少必需的'text'字段")
+                        continue
+                    raw_data.append(json_line['text'])
                 except json.JSONDecodeError as e:
                     print(f"警告：跳过第{i+1}行- {str(e)}")
                     continue
@@ -44,7 +57,7 @@ class TextDataset(Dataset):
         
         full_encoded = []
         for text in tqdm(raw_data,desc='编码数据'):
-            encoded_text = self.enc.encode(text)
+            encoded_text = self.enc.encode(text, allowed_special={"<|im_start|>", "<|im_end|>"})
             full_encoded.extend(encoded_text + [self.eos_token])
 
         for i in range(0, len(full_encoded),self.block_size):
@@ -76,34 +89,31 @@ class SFTDataset(Dataset):
     def __init__(self, data_path, block_size, max_lines, tokenizer_name="gpt2"):
         self.block_size = block_size
         self.max_lines = max_lines
-        self.enc = tiktoken.get_encoding(tokenizer_name)
+        self.enc = get_chatml_tokenizer(tokenizer_name)
 
         # 特殊token
-        self.eos_token_id = self.enc.encode("<|endoftext|>", allowed_special={"<|endoftext|>"})[0]
-        self.assistant_token_ids = self.enc.encode("<|assistant|>", allowed_special={"<|assistant|>"})
-        self.user_token_ids = self.enc.encode("<|user|>", allowed_special={"<|user|>"})
+        self.im_start = "<|im_start|>"
+        self.im_end = "<|im_end|>"
+        self.im_start_ids = self.enc.encode(self.im_start, allowed_special={self.im_start})
+        self.im_end_ids = self.enc.encode(self.im_end, allowed_special={self.im_end})
 
         # 打印debug
-        # print(f"[Init] <|assistant|> tokens: {self.assistant_token_ids}")
-        # print(f"[Init] <|user|> tokens: {self.user_token_ids}")
-        # print(f"[Init] <|endoftext|> token id: {self.eos_token_id}")
+        print(f"[Init] <|im_start|> tokens: {self.im_start_ids}")
+        print(f"[Init] <|im_end|> tokens: {self.im_end_ids}")
 
         self.encoded_data = []
         self.loss_masks = []
         self.load_and_process_data(data_path)
 
     def format_conversations(self, conversations):
-        prompt = ""
+        parts = []
         for turn in conversations:
             role = turn["role"]
-            if role == "user":
-                prompt += "<|user|>" + turn["content"]
-            elif role == "assistant":
-                prompt += "<|assistant|>" + turn["content"]
-        return prompt + "<|endoftext|>"
+            content = turn["content"]
+            parts.append(f"{self.im_start}{role}\n{content}{self.im_end}\n")
+        return ''.join(parts)
 
     def load_and_process_data(self, path):
-        raw_data = []
         if not (path.endswith('.json') or path.endswith('.jsonl')):
             raise ValueError("数据格式必须为 .json 或 .jsonl")
 
@@ -116,51 +126,76 @@ class SFTDataset(Dataset):
                     if 'conversations' not in data:
                         continue
                     if not any(turn["role"] == "assistant" for turn in data['conversations']):
-                        continue  # 跳过没有assistant说话的
-                    raw_data.append(data['conversations'])
-                except json.JSONDecodeError:
-                    print(f"警告：跳过第{i+1}行- {str(e)}")
+                        continue
+                    full_text = self.format_conversations(data['conversations'])
+                    encoded = self.enc.encode(full_text, allowed_special={self.im_start, self.im_end})
+                    mask = self._generate_loss_mask(encoded)
+                    self.encoded_data.append(encoded)
+                    self.loss_masks.append(mask)
+                except Exception as e:
+                    print(f"跳过第{i+1}行（出错）: {str(e)}")
                     continue
 
-        for conv in tqdm(raw_data, desc="编码对话"):
-            full_text = self.format_conversations(conv)
-            encoded = self.enc.encode(full_text, allowed_special={"<|user|>", "<|assistant|>", "<|endoftext|>"})
+    def _generate_loss_mask(self, input_ids):
+        mask = [0] * len(input_ids)
+        i = 0
+        while i < len(input_ids):
+            # 查找 <|im_start|>
+            if input_ids[i:i+len(self.im_start_ids)] == self.im_start_ids:
+                role_start = i + len(self.im_start_ids)
 
-            for i in range(0, len(encoded), self.block_size + 1):
-                chunk = encoded[i:i+self.block_size+1]
-                if len(chunk) < self.block_size + 1:
-                    chunk += [self.eos_token_id] * (self.block_size + 1 - len(chunk))
-                self.encoded_data.append(chunk)
+                # 从 role_start 开始找 role 的字符串（例如 'assistant'）
+                remaining = input_ids[role_start:]
+                for role in ['assistant', 'user']:
+                    role_ids = self.enc.encode(role + "\n")
+                    if remaining[:len(role_ids)] == role_ids:
+                        if role == 'assistant':
+                            content_start = role_start + len(role_ids)
+                            j = content_start
+                            while j < len(input_ids):
+                                if input_ids[j:j+len(self.im_end_ids)] == self.im_end_ids:
+                                    break
+                                j += 1
+                            for k in range(content_start, j):
+                                mask[k] = 1
+                            i = j + len(self.im_end_ids)
+                        else:
+                            # 跳过 user 的部分
+                            end_idx = role_start + len(role_ids)
+                            while end_idx < len(input_ids):
+                                if input_ids[end_idx:end_idx+len(self.im_end_ids)] == self.im_end_ids:
+                                    break
+                                end_idx += 1
+                            i = end_idx + len(self.im_end_ids)
+                        break
+                else:
+                    # 没有匹配到对应，跳过
+                    i += 1
+            else:
+                i += 1
+        return mask
 
-                # 动态处理loss_mask
-                mask = [0] * len(chunk)
-                j = 0
-                while j < len(chunk):
-                    if chunk[j:j+len(self.assistant_token_ids)] == self.assistant_token_ids:
-                        start = j + len(self.assistant_token_ids)
-                        end = start
-                        while end < len(chunk):
-                            if chunk[end:end+len(self.user_token_ids)] == self.user_token_ids or \
-                               chunk[end] == self.eos_token_id:
-                                break
-                            end += 1
-                        for k in range(start, end):
-                            mask[k] = 1
-                        j = end
-                    else:
-                        j += 1
-
-                self.loss_masks.append(mask)
 
     def __len__(self):
         return len(self.encoded_data)
 
     def __getitem__(self, idx):
         chunk = self.encoded_data[idx]
-        loss_mask = self.loss_masks[idx]
+        mask = self.loss_masks[idx]
+
+        pad_token = self.enc.eot_token  # 对应 <|endoftext|>
+        pad_len = (self.block_size + 1) - len(chunk)
+        if pad_len > 0:
+            chunk += [pad_token] * pad_len
+            mask += [0] * pad_len
+
+        chunk = chunk[:self.block_size + 1]
+        mask = mask[:self.block_size + 1]
+
         x = torch.tensor(chunk[:-1], dtype=torch.long)
         y = torch.tensor(chunk[1:], dtype=torch.long)
-        lm = torch.tensor(loss_mask[1:], dtype=torch.long)
+        lm = torch.tensor(mask[1:], dtype=torch.long)
+
         return x, y, lm
 
     def encode(self, text):

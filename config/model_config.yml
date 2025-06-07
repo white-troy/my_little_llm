@@ -1,6 +1,6 @@
 # 基础配置
 model_name: "littlellm"
-vocab_size: 50257
+vocab_size: 50259 #50257+2 
 
 # 模型结构
 block_size: 512 #上下文长度

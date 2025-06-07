@@ -42,8 +42,8 @@ def pre_train(model,config,train_func,eval_func):
         val_loss = eval_func(model,val_loader,device,epoch)
 
         # 保存模型
-        avg_train_loss = train_loss / len(train_loader)
-        avg_val_loss = val_loss / len(val_loader)
+        avg_train_loss = train_loss
+        avg_val_loss = val_loss
 
         logger.info(f"Epoch {epoch+1}/{config.epochs} - Train Loss: {avg_train_loss:.4f} - Val Loss: {avg_val_loss:.4f}")
 
@@ -99,8 +99,8 @@ def sft_train(weight_path,config,train_func,eval_func):
         train_loss = train_func(model,train_loader,optimizer,lr,device,epoch)
         val_loss = eval_func(model,val_loader,device,epoch)
 
-        avg_train_loss = train_loss / len(train_loader)
-        avg_val_loss = val_loss / len(val_loader)
+        avg_train_loss = train_loss
+        avg_val_loss = val_loss
 
         logger.info(f"[SFT] Epoch {epoch+1}/{config.epochs} - Train Loss: {avg_train_loss:.4f} - Val Loss: {avg_val_loss:.4f}")
 

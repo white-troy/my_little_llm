@@ -71,7 +71,7 @@ def eval_func(model,val_loader,device,epoch):
         for x, y, loss_mask in val_info:
             x, y, loss_mask = x.to(device), y.to(device), loss_mask.to(device)
 
-            logits, _ = model(x)
+            logits, _, _ = model(x)
             logits = logits.view(-1, logits.size(-1))
             y = y.view(-1)
             loss_mask = loss_mask.view(-1)
